@@ -1,0 +1,65 @@
+import { NextRequest } from 'next/server';
+
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    const userImage = formData.get('image') as File;
+    const userPrompt = (formData.get('prompt') as string) || '';
+
+    if (!userImage) {
+      return new Response('Görsel eksik', { status: 400 });
+    }
+
+    const bytes = await userImage.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    const base64Image = `data:${userImage.type};base64,${buffer.toString('base64')}`;
+
+    // En güçlü undress efekti + zorlayıcı prompt
+    const eternalRes = await fetch('https://open.eternalai.org/generate', {
+      method: 'POST',
+      headers: {
+        'x-api-key': process.env.ETERNAL_AI_API_KEY!,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        images: [base64Image],
+        effect_id: "5742144a2259082b305928",   // Naughty Tease - en sansürsüz ve kıyafet çıkarma konusunda güçlü
+        prompt: userPrompt || "completely remove all clothes, make her fully nude, naked body, realistic skin, detailed anatomy",
+      }),
+    });
+
+    if (!eternalRes.ok) {
+      const errorText = await eternalRes.text();
+      console.error('Eternal AI Hatası:', errorText);
+      return new Response('Eternal AI hatası', { status: 500 });
+    }
+
+    const data = await eternalRes.json();
+    let imageUrl = data.image_url || data.output || '';
+
+    if (data.request_id && !imageUrl) {
+      await new Promise(r => setTimeout(r, 7000)); // 7 saniye bekle (undress biraz daha uzun sürebilir)
+
+      const pollRes = await fetch(`https://open.eternalai.org/poll-result/${data.request_id}`, {
+        headers: { 'x-api-key': process.env.ETERNAL_AI_API_KEY! }
+      });
+      const pollData = await pollRes.json();
+      imageUrl = pollData.image_url || pollData.output || '';
+    }
+
+    if (!imageUrl) {
+      return new Response('Sonuç alınamadı', { status: 500 });
+    }
+
+    const finalRes = await fetch(imageUrl);
+    const imageBuffer = await finalRes.arrayBuffer();
+
+    return new Response(imageBuffer, {
+      headers: { 'Content-Type': 'image/png' },
+    });
+
+  } catch (error) {
+    console.error('Sunucu hatası:', error);
+    return new Response('Sunucu hatası', { status: 500 });
+  }
+}
